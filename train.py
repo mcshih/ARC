@@ -8,7 +8,7 @@ import batcher
 from batcher import Batcher
 import models
 from models import ArcBinaryClassifier
-
+from matplotlib import pyplot as plt
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--batchSize', type=int, default=128, help='input batch size')
@@ -25,7 +25,8 @@ parser.add_argument('--load', default=None, help='the model to load from. Start 
 
 def get_pct_accuracy(pred: Variable, target) -> int:
     hard_pred = (pred > 0.5).int()
-    correct = (hard_pred == target).sum().data[0]
+    #correct = (hard_pred == target).sum().data[0]
+    correct = (hard_pred == target).sum().data
     accuracy = float(correct) / target.size()[0]
     accuracy = int(accuracy * 100)
     return accuracy
@@ -84,9 +85,17 @@ def train():
         i += 1
 
         X, Y = loader.fetch_batch("train")
+        #print(X.shape, Y)
+        #
+        #for i in range(opt.batchSize):
+        #    for j in range(2):
+        #        plt.imshow(X[i, j], cmap="gray")
+        #        plt.savefig('test_{}_{}.png'.format(i, j))
+        #        plt.close()
+        
         pred = discriminator(X)
         loss = bce(pred, Y.float())
-
+        
         if i % 10 == 0:
 
             # validate your model
@@ -94,8 +103,11 @@ def train():
             pred_val = discriminator(X_val)
             loss_val = bce(pred_val, Y_val.float())
 
-            training_loss = loss.data[0]
-            validation_loss = loss_val.data[0]
+            #training_loss = loss.data[0]
+            #validation_loss = loss_val.data[0]
+
+            training_loss = loss.data
+            validation_loss = loss_val.data
 
             print("Iteration: {} \t Train: Acc={}%, Loss={} \t\t Validation: Acc={}%, Loss={}".format(
                 i, get_pct_accuracy(pred, Y), training_loss, get_pct_accuracy(pred_val, Y_val), validation_loss

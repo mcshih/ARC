@@ -3,7 +3,7 @@ import urllib.request
 import numpy as np
 import zipfile
 
-from scipy.ndimage import imread
+from imageio import imread
 
 
 omniglot_url = 'http://github.com/brendenlake/omniglot/archive/master.zip'

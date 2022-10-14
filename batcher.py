@@ -8,11 +8,11 @@ from numpy.random import choice
 import torch
 from torch.autograd import Variable
 
-from scipy.misc import imresize as resize
+from skimage.transform import resize
 
 from image_augmenter import ImageAugmenter
 
-use_cuda = False
+use_cuda = True
 
 
 class Omniglot(object):
@@ -39,7 +39,7 @@ class Omniglot(object):
         resized_chars = np.zeros((1623, 20, image_size, image_size), dtype='uint8')
         for i in range(1623):
             for j in range(20):
-                resized_chars[i, j] = resize(chars[i, j], (image_size, image_size))
+                resized_chars[i, j] = resize(chars[i, j], (image_size, image_size)) *255
         chars = resized_chars
 
         self.mean_pixel = chars.mean() / 255.0  # used later for mean subtraction
