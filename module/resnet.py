@@ -134,6 +134,42 @@ class ResNet(nn.Module):
 
         return output
 
+class ResNet_(nn.Module):
+
+    def __init__(self, block, num_block):
+        super().__init__()
+
+        self.in_channels = 64
+
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True))
+        #we use a different inputsize than the original paper
+        #so conv2_x's stride is 1
+        self.conv2_x = self._make_layer(block, 64, num_block[0], 1)
+        self.conv3_x = self._make_layer(block, 128, num_block[1], 2)
+        self.conv4_x = self._make_layer(block, 256, num_block[2], 2)
+
+    def _make_layer(self, block, out_channels, num_blocks, stride):
+        # we have num_block blocks per layer, the first block
+        # could be 1 or 2, other blocks would always be 1
+        strides = [stride] + [1] * (num_blocks - 1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_channels, out_channels, stride))
+            self.in_channels = out_channels * block.expansion
+
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        output = self.conv1(x)
+        output = self.conv2_x(output)
+        output = self.conv3_x(output)
+        output = self.conv4_x(output)
+
+        return output
+
 def resnet18():
     """ return a ResNet 18 object
     """
@@ -143,6 +179,11 @@ def resnet34():
     """ return a ResNet 34 object
     """
     return ResNet(BasicBlock, [3, 4, 6, 3])
+
+def resnet34_modify():
+    """ return a ResNet 34 object
+    """
+    return ResNet_(BasicBlock, [3, 4, 6])
 
 def resnet50():
     """ return a ResNet 50 object

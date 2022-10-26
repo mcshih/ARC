@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import numpy as np
 
-from models import ArcBinaryClassifier
+from models import ArcBinaryClassifier, ArcBinaryClassifier_conv
 from batcher import Batcher
 
 
@@ -36,14 +36,14 @@ os.makedirs(images_path, exist_ok=True)
 
 
 # initialise the batcher
-batcher = Batcher(batch_size=opt.batchSize)
+batcher = Batcher(batch_size=opt.batchSize, image_size=opt.imageSize)
 
 
 def display(image1, mask1, image2, mask2, name="hola.png"):
     _, ax = plt.subplots(1, 2)
 
     # a heuristic for deciding cutoff
-    masking_cutoff = 2.4 / (opt.glimpseSize)**2
+    masking_cutoff = 0.3 / (opt.glimpseSize)**2
 
     mask1 = (mask1 > masking_cutoff).data.cpu().detach().numpy()
     mask1 = np.ma.masked_where(mask1 == 0, mask1)
@@ -64,16 +64,18 @@ def get_sample(discriminator):
 
     # size of the set to choose sample from from
     sample_size = 30
-    X, Y = batcher.fetch_batch("train", batch_size=sample_size)
-    pred = discriminator(X)
+    X, Y = batcher.fetch_batch("test", batch_size=sample_size)
+    pred, _ = discriminator(X)
 
     if opt.same:
         same_pred = pred[sample_size // 2:].data.cpu().detach().numpy()[:, 0]
         mx = same_pred.argsort()[len(same_pred) // 2]  # choose the sample with median confidence
+        print(mx, same_pred[mx], Y[mx])
         index = mx + sample_size // 2
     else:
         diff_pred = pred[:sample_size // 2].data.cpu().detach().numpy()[:, 0]
         mx = diff_pred.argsort()[len(diff_pred) // 2]  # choose the sample with median confidence
+        print(mx, diff_pred[mx], Y[mx])
         index = mx
 
     return X[index]
@@ -82,7 +84,7 @@ def get_sample(discriminator):
 def visualize():
 
     # initialise the model
-    discriminator = ArcBinaryClassifier(num_glimpses=opt.numGlimpses,
+    discriminator = ArcBinaryClassifier_conv(num_glimpses=opt.numGlimpses,
                                         glimpse_h=opt.glimpseSize,
                                         glimpse_w=opt.glimpseSize,
                                         controller_out=opt.numStates)
@@ -93,7 +95,8 @@ def visualize():
 
     sample = get_sample(discriminator)
 
-    all_hidden = arc._forward(sample[None, :, :])[:, 0, :]  # (2*numGlimpses, controller_out)
+    all_hidden, _ = arc._forward(sample[None, :, :])
+    all_hidden = all_hidden[:, 0, :]  # (2*numGlimpses, controller_out)
     glimpse_params = torch.tanh(arc.glimpser(all_hidden))
     masks = arc.glimpse_window.get_attention_mask(glimpse_params, mask_h=opt.imageSize, mask_w=opt.imageSize)
 

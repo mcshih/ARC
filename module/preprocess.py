@@ -83,8 +83,11 @@ def normalize_image(img: np.ndarray,
     # im.save("my_demo_1.png")
     #binarized_image = binarized_image.astype(int)
     r, c = np.where(binarized_image == 0)
+    #r, c = np.where(blurred_image > threshold)
     r_center = int(r.mean() - r.min())
     c_center = int(c.mean() - c.min())
+    #r_center = int(np.average(r))
+    #c_center = int(np.average(c))
 
     # Crop the image with a tight box
     cropped = img[r.min(): r.max(), c.min(): c.max()]

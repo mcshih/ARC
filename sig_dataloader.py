@@ -13,7 +13,7 @@ from skimage.transform import resize
 import torchvision.transforms as transforms
 from image_augmenter import ImageAugmenter
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageFilter
 from sklearn.model_selection import train_test_split
 import cv2
 import scipy.ndimage as ndimage
@@ -27,8 +27,8 @@ def imread_tool(img_path):
     image = np.asarray(Image.open(img_path).convert('L'))
     inputSize = image.shape
     normalized_image, cropped_image = normalize_image(image.astype(np.uint8), inputSize) # RETURN: normalized, cropped
-    image = normalized_image
-    return Image.fromarray(image)
+    #image = normalized_image
+    return Image.fromarray(normalized_image) , Image.fromarray(cropped_image)
 
     image = cv2.imread(img_path)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -69,11 +69,13 @@ class SigDataset(Dataset):
                                                     #transforms.Normalize(mean=[0.5, 0.5, 0.5],std=[0.5, 0.5, 0.5]),
                                                     #transforms.Grayscale(num_output_channels=1)
                                                     ])
-        self.augment_transforms = transforms.Compose([transforms.RandomApply(torch.nn.ModuleList([
-                                                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.2),
+        self.augment_transforms = transforms.Compose([transforms.ColorJitter(0.4, 0.4, 0.4, 0.2),
                                                     transforms.RandomErasing(),
-                                                    #transforms.RandomEqualize(),
-                                                    ]))])
+                                                    transforms.RandomHorizontalFlip(),
+                                                    transforms.RandomVerticalFlip(),
+                                                    transforms.RandomResizedCrop((image_size,image_size)),
+                                                    transforms.RandomInvert(),
+                                                    ])
         data_root = path  # ./../ChiSig
         data_df = pd.DataFrame(columns=['img_path', 'label', 'writer_id'])
 
@@ -96,7 +98,7 @@ class SigDataset(Dataset):
                     img_split = img.split('-')
                     label = int(img_split[1])
                     data_df = data_df.append({'img_path': img_path, 'label': label, 'writer_id': writer_id}, ignore_index=True)
-                    sig_image = imread_tool(img_path)
+                    sig_image, _ = imread_tool(img_path) # normalized
                     sig_image = self.basic_transforms(sig_image)
                     self.img_dict[img_path] = sig_image
             
@@ -105,6 +107,10 @@ class SigDataset(Dataset):
         self.data_df = data_df
         self.train_df, self.test_df = train_test_split(data_df, test_size=0.3, shuffle=False, random_state=1)
         data_df.to_csv("data.csv")
+        #self.train_df = data_df[data_df['writer_id'] >= 100]
+        #self.test_df = data_df[data_df['writer_id'] < 100]
+        self.train_df.to_csv("data_train.csv")
+        self.test_df.to_csv("data_test.csv")
 
         self.train = train
 
@@ -130,8 +136,8 @@ class SigDataset(Dataset):
         #sig_image = imread_tool(img_path)
         #sig_image = self.basic_transforms(sig_image)
         sig_image = self.img_dict[img_path]
-        if self.train:
-            sig_image = self.augment_transforms(sig_image)
+        #if self.train:
+        #    sig_image = self.augment_transforms(sig_image)
         writer_id = self.data_df.iloc[index]['writer_id']
         label = self.data_df.iloc[index]['label']
 
@@ -153,8 +159,8 @@ class SigDataset(Dataset):
         #positive_sig_image = imread_tool(positive_path)
         #positive_sig_image = self.basic_transforms(positive_sig_image)
         positive_sig_image = self.img_dict[positive_path]
-        if self.train:
-            positive_sig_image = self.augment_transforms(positive_sig_image)
+        #if self.train:
+        #    positive_sig_image = self.augment_transforms(positive_sig_image)
 
         # negative
         while True:
@@ -167,15 +173,20 @@ class SigDataset(Dataset):
         #negative_sig_image = imread_tool(negative_path)
         #negative_sig_image = self.basic_transforms(negative_sig_image)
         negative_sig_image = self.img_dict[negative_path]
-        if self.train:
-            negative_sig_image = self.augment_transforms(negative_sig_image)
+        #if self.train:
+        #    negative_sig_image = self.augment_transforms(negative_sig_image)
         
         image_pair_0 = torch.cat((sig_image, positive_sig_image), dim=0)
+        if self.train: image_pair_0 = torch.squeeze(self.augment_transforms(torch.unsqueeze(image_pair_0, dim=1)))
         image_pair_1 = torch.cat((sig_image, negative_sig_image), dim=0)
+        if self.train: image_pair_1 = torch.squeeze(self.augment_transforms(torch.unsqueeze(image_pair_1, dim=1)))
         image_pairs = torch.cat((torch.unsqueeze(image_pair_0, 0), torch.unsqueeze(image_pair_1, 0)), dim=0)
         #print(image_pairs.shape)
 
-        return image_pairs, torch.tensor([[1],[0]])
+        if self.train:
+            return image_pairs, torch.tensor([[1],[0]])
+        else:
+            return image_pairs, torch.tensor([[1],[0]]), {'Anchor':img_path, 'positive':positive_path, 'negative':negative_path}
 
 
 class SigDataset_BH(Dataset):
@@ -210,7 +221,7 @@ class SigDataset_BH(Dataset):
         crop_rgb = Image.fromarray(np.asarray(image[x_start:x_end, y_start:y_end]))
         return crop_rgb
     
-    def __init__(self, path, train=True, image_size=256):
+    def __init__(self, path, train=True, image_size=256, mode='normalized'):
         self.path = path
         self.image_size = image_size
         self.basic_transforms = transforms.Compose([transforms.RandomInvert(1.0),
@@ -220,11 +231,13 @@ class SigDataset_BH(Dataset):
                                                     #transforms.Normalize(mean=[0.5, 0.5, 0.5],std=[0.5, 0.5, 0.5]),
                                                     #transforms.Grayscale(num_output_channels=1)
                                                     ])
-        self.augment_transforms = transforms.Compose([transforms.RandomApply(torch.nn.ModuleList([
-                                                    transforms.ColorJitter(0.4, 0.4, 0.4, 0.2),
+        self.augment_transforms = transforms.Compose([transforms.ColorJitter(0.4, 0.4, 0.4, 0.2),
                                                     transforms.RandomErasing(),
-                                                    #transforms.RandomEqualize(),
-                                                    ]))])
+                                                    transforms.RandomHorizontalFlip(),
+                                                    transforms.RandomVerticalFlip(),
+                                                    #transforms.RandomResizedCrop((image_size,image_size)),
+                                                    #transforms.RandomInvert(),
+                                                    ])
         data_root = path  # ./../BHSig260/Bengali
         data_df = pd.DataFrame(columns=['img_path', 'label', 'writer_id'])
 
@@ -243,7 +256,26 @@ class SigDataset_BH(Dataset):
                     assert label is not None
                     data_df = data_df.append({'img_path': img_path, 'label': label, 'writer_id': int(dir)}, ignore_index=True)
                     #sig_image = Image.open(img_path).convert('1')
-                    sig_image = imread_tool(img_path)
+                    # normalized, cropped
+                    if mode == 'normalized':
+                        sig_image, _ = imread_tool(img_path)
+                    elif mode == 'cropped':
+                        _, sig_image = imread_tool(img_path)
+                        sig_image = sig_image.filter(ImageFilter.MinFilter(5))
+                    elif mode == 'centered':
+                        _, sig_image = imread_tool(img_path)
+                        trans = transforms.CenterCrop(np.asarray(sig_image).shape[0])
+                        sig_image = trans(sig_image)
+                    elif mode == 'left':
+                        sig_image, _ = imread_tool(img_path)
+                        width, height = sig_image.size
+                        left = 0
+                        top = 0
+                        right = width / 2
+                        bottom = height
+                        sig_image = sig_image.crop((left, top, right, bottom)).filter(ImageFilter.MinFilter(5))
+                    else:
+                        return NotImplementedError
                     #sig_image = self.__get_com_cropped__(sig_image)
                     sig_image = self.basic_transforms(sig_image)
                     self.img_dict[img_path] = sig_image
@@ -251,17 +283,18 @@ class SigDataset_BH(Dataset):
         print(f'total {len(data_df)} images !!')
         self.total_data_df = data_df
         pos_df = data_df.groupby('label').get_group(1)
-        if 'Bengali' in path: # 80 train, 20 test
+        if 'Bengali' in path:
+            #'''
+            self.train_df = pos_df#[pos_df['writer_id'] >= 50]
+            self.test_df = pos_df#[pos_df['writer_id'] < 50]
             '''
-            self.train_df = pos_df[pos_df['writer_id'] > 50]
-            self.test_df = pos_df[pos_df['writer_id'] <= 50]
+            self.train_df = pos_df[pos_df['writer_id'] >= 20]
+            self.test_df = pos_df[pos_df['writer_id'] < 20]
             '''
-            self.train_df = pos_df[pos_df['writer_id'] > 20]
-            self.test_df = pos_df[pos_df['writer_id'] <= 20]
             #self.train_df, self.test_df = train_test_split(pos_df, test_size=0.5, shuffle=False, random_state=1)
         elif 'Hindi' in path: # 100 train, 60 test
-            self.train_df = pos_df[pos_df['writer_id'] > 60]
-            self.test_df = pos_df[pos_df['writer_id'] <= 60]
+            self.train_df = pos_df[pos_df['writer_id'] >= 60]
+            self.test_df = pos_df[pos_df['writer_id'] < 60]
             #self.train_df, self.test_df = train_test_split(pos_df, test_size=0.5, shuffle=False, random_state=1)
         data_df.to_csv("data.csv")
 
@@ -286,8 +319,8 @@ class SigDataset_BH(Dataset):
         #print(img_path)
         #sig_image = imread_tool(img_path)
         sig_image = self.img_dict[img_path]
-        if self.train:
-            sig_image = self.augment_transforms(sig_image)
+        #if self.train:
+        #    sig_image = self.augment_transforms(sig_image)
         writer_id = self.data_df.iloc[index]['writer_id']
         label = self.data_df.iloc[index]['label']
         
@@ -312,8 +345,8 @@ class SigDataset_BH(Dataset):
         #positive_sig_image = Image.open(positive_path).convert('RGB')
         #positive_sig_image = imread_tool(positive_path)
         positive_sig_image = self.img_dict[positive_path]
-        if self.train:
-            positive_sig_image = self.augment_transforms(positive_sig_image)
+        #if self.train:
+        #    positive_sig_image = self.augment_transforms(positive_sig_image)
 
         # negative
         while True:
@@ -325,12 +358,90 @@ class SigDataset_BH(Dataset):
         #negative_sig_image = Image.open(negative_path).convert('RGB')
         #negative_sig_image = imread_tool(negative_path)
         negative_sig_image = self.img_dict[negative_path]
-        if self.train:
-            negative_sig_image = self.augment_transforms(negative_sig_image)
+        #if self.train:
+        #    negative_sig_image = self.augment_transforms(negative_sig_image)
+
+        # negative 2
+        '''
+        while True:
+            sample_df = in_class_df.sample()
+            if sample_df['label'].item() != self.data_df.iloc[index]['label'] and sample_df['img_path'].item() != negative_path:
+                negative_path_2 = sample_df['img_path'].item()
+                break
+        negative_sig_image_2 = self.img_dict[negative_path_2]
+        '''
         
+        if self.train:
+            image_pair_0 = torch.cat((sig_image, positive_sig_image), dim=0)
+            image_pair_0 = torch.squeeze(self.augment_transforms(torch.unsqueeze(image_pair_0, dim=1)))
+            image_pair_1 = torch.cat((sig_image, negative_sig_image), dim=0)
+            image_pair_1 = torch.squeeze(self.augment_transforms(torch.unsqueeze(image_pair_1, dim=1)))
+            image_pair_2 = torch.cat((positive_sig_image, sig_image), dim=0)
+            image_pair_2 = torch.squeeze(self.augment_transforms(torch.unsqueeze(image_pair_0, dim=1)))
+            image_pair_3 = torch.cat((negative_sig_image, sig_image), dim=0)
+            image_pair_3 = torch.squeeze(self.augment_transforms(torch.unsqueeze(image_pair_1, dim=1)))
+            image_pairs = torch.cat((torch.unsqueeze(image_pair_0, 0),
+                                    torch.unsqueeze(image_pair_1, 0),
+                                    torch.unsqueeze(image_pair_2, 0),
+                                    torch.unsqueeze(image_pair_3, 0)
+                                    ), dim=0)
+            #print(image_pairs.shape)
+            return image_pairs, torch.tensor([[1],[0],[1],[0]])
+        else:
+            image_pair_0 = torch.cat((sig_image, positive_sig_image), dim=0)
+            image_pair_1 = torch.cat((sig_image, negative_sig_image), dim=0)
+            image_pairs = torch.cat((torch.unsqueeze(image_pair_0, 0), torch.unsqueeze(image_pair_1, 0)), dim=0)
+
+            return image_pairs, torch.tensor([[1],[0]]), {'Anchor':img_path, 'positive':positive_path, 'negative':negative_path}
+
+class single_test_dataset(Dataset):
+    def __init__(self, anchor_path, positive_path, negative_path, image_size=256, mode='normalized'):
+        self.anchor_path = anchor_path
+        self.positive_path = positive_path
+        self.negative_path = negative_path
+        self.basic_transforms = transforms.Compose([transforms.RandomInvert(1.0),
+                                                    transforms.Resize((image_size,image_size)),
+                                                    transforms.ToTensor(),
+                                                    #transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]),
+                                                    #transforms.Normalize(mean=[0.5, 0.5, 0.5],std=[0.5, 0.5, 0.5]),
+                                                    #transforms.Grayscale(num_output_channels=1)
+                                                    ])
+        self.img_dict = {}
+        path_dict = {'Anchor':anchor_path, 'positive':positive_path, 'negative':negative_path}
+        for item in ['Anchor', 'positive', 'negative']:
+            print(path_dict[item])
+            # normalized, cropped
+            if mode == 'normalized':
+                sig_image, _ = imread_tool(path_dict[item])
+                sig_image.save('img_pre_{}.png'.format(item))
+            elif mode == 'cropped':
+                _, sig_image = imread_tool(path_dict[item])
+            elif mode == 'centered':
+                _, sig_image = imread_tool(path_dict[item])
+                trans = transforms.CenterCrop(np.asarray(sig_image).shape[0])
+                sig_image = trans(sig_image)
+            elif mode == 'left':
+                sig_image, _ = imread_tool(path_dict[item])
+                width, height = sig_image.size
+                left = 0
+                top = 0
+                right = width / 2
+                bottom = height
+                sig_image = sig_image.crop((left, top, right, bottom)).filter(ImageFilter.MinFilter(5))
+            else:
+                return NotImplementedError
+            sig_image = self.basic_transforms(sig_image)
+            self.img_dict[item] = sig_image
+    def __len__(self):
+        return 1
+    
+    def __getitem__(self, index):
+        # 'Anchor', 'positive', 'negative'
+        sig_image = self.img_dict['Anchor']
+        positive_sig_image = self.img_dict['positive']
+        negative_sig_image = self.img_dict['negative']
         image_pair_0 = torch.cat((sig_image, positive_sig_image), dim=0)
         image_pair_1 = torch.cat((sig_image, negative_sig_image), dim=0)
         image_pairs = torch.cat((torch.unsqueeze(image_pair_0, 0), torch.unsqueeze(image_pair_1, 0)), dim=0)
-        #print(image_pairs.shape)
 
-        return image_pairs, torch.tensor([[1],[0]])
+        return image_pairs, torch.tensor([[1],[0]]), {'Anchor':self.anchor_path, 'positive':self.positive_path, 'negative':self.negative_path}

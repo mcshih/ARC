@@ -1,10 +1,11 @@
-from builtins import print
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from module.resnet import resnet18
 import math
+from torchvision.utils import save_image
+import os
 
 use_cuda = True
 
@@ -461,6 +462,21 @@ class GlimpseWindow_conv:
         mask = mask.float()
 
         return mask
+    
+    def get_attention_box(self, glimpse_params: Variable, mask_h: int, mask_w: int) -> Variable:
+        # delta_caps: Variable, center_caps: Variable, image_size: int, glimpse_size: int, channels: int, vis=False
+        # convert dimension sizes to float. lots of math ahead.
+        image_size_x = float(mask_w)
+        image_size_y = float(mask_h)
+        glimpse_size = float(self.glimpse_w)
+
+        # scale the centers and the deltas to map to the actual size of given image.
+        centers_x = (image_size_x - 1) * (glimpse_params[:, 0] + 1) / 2.0
+        centers_y = (image_size_y - 1) * (glimpse_params[:, 1] + 1) / 2.0
+        deltas_x = (float(image_size_x) / glimpse_size) * (1.0 - torch.abs(glimpse_params[:, 2]))
+        deltas_y = (float(image_size_y) / glimpse_size) * (1.0 - torch.abs(glimpse_params[:, 2]))
+
+        return centers_x.tolist(), centers_y.tolist(), deltas_x.tolist(), deltas_y.tolist()
 
     def get_glimpse(self, images: Variable, glimpse_params: Variable) -> Variable:
         """
@@ -495,7 +511,7 @@ class GlimpseWindow_conv:
         glimpses = self.batched_dot(F_h.transpose(1, 2), glimpses)
         #print(glimpses.shape, F_w.transpose(1, 2).transpose(2, 3).shape)
         glimpses = self.batched_dot(glimpses, F_w.transpose(1, 2).transpose(2, 3))
-
+        
         return glimpses  # (B, glimpse_h, glimpse_w)
 
 class ARC_conv(nn.Module):
@@ -507,12 +523,32 @@ class ARC_conv(nn.Module):
         self.glimpse_w = glimpse_w
         self.controller_out = controller_out
 
-        self.channels = 64
+        #"""
+        self.channels = 128
+        self.convolve = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size = 3, stride = 1, padding = 1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size = 3, stride = 1, padding = 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size = 3, stride = 1, padding = 1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=64, out_channels=self.channels, kernel_size = 3, stride = 1, padding = 1),
+            nn.BatchNorm2d(self.channels),
+            nn.ReLU(),
+            )
+        #"""
+        """
         self.convolve = nn.Sequential(
           ResidualBlock(in_channels=1, out_channels=self.channels),
           ResidualBlock(in_channels=self.channels, out_channels=self.channels),
           ResidualBlock(in_channels=self.channels, out_channels=self.channels),
         ) if res else ResidualBlock(in_channels=1, out_channels=self.channels)
+        """
+        #self.channels = 64
+        #self.convolve = ResidualBlock(in_channels=1, out_channels=self.channels)
         #if res:
         #    self.convolve.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         #self.convolve_res = torchvision.models.resnet34()
@@ -524,6 +560,12 @@ class ARC_conv(nn.Module):
 
         # this will actually generate glimpses from images using the glimpse parameters.
         self.glimpse_window = GlimpseWindow_conv(glimpse_h=self.glimpse_h, glimpse_w=self.glimpse_w, channels=self.channels)
+
+        for param in self.controller.parameters():
+            if len(param.shape) >= 2:
+                torch.nn.init.orthogonal_(param.data)
+            else:
+                torch.nn.init.normal_(param.data)
 
     def forward(self, image_pairs: Variable) -> Variable:
         """
@@ -541,6 +583,9 @@ class ARC_conv(nn.Module):
         # return only the last hidden state
         all_hidden, _ = self._forward(image_pairs)  # (2*num_glimpses, B, controller_out)
         last_hidden = all_hidden[-1, :, :]  # (B, controller_out)
+        
+        #all_hidden = all_hidden.transpose(0, 1)
+        #all_hidden = torch.flatten(all_hidden, start_dim=1)
 
         return last_hidden
 
@@ -596,6 +641,7 @@ class ARC_conv(nn.Module):
             glimpse_params = torch.tanh(self.glimpser(Hx))  # (B, 3)  a batch of glimpse params (x, y, delta)
             #print(glimpse_params)
             glimpses = self.glimpse_window.get_glimpse(images_to_observe, glimpse_params)  # (B, glimpse_h, glimpse_w)
+            #save_image(glimpses[0,0], os.path.join('glimpses','img_{}.png'.format(turn)))
             flattened_glimpses = glimpses.view(batch_size, -1)  # (B, glimpse_h * glimpse_w), one time-step
 
             # feed the glimpses and the previous hidden state to the LSTM.
@@ -643,7 +689,7 @@ class ArcBinaryClassifier_conv(nn.Module):
         d1 = F.elu(self.dense1(arc_out))
         decision = torch.sigmoid(self.dense2(d1))
 
-        return decision
+        return decision, arc_out
 
     def save_to_file(self, file_path: str) -> None:
         torch.save(self.state_dict(), file_path)

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import batcher
 from batcher import Batcher
 import models
-from models import ArcBinaryClassifier
+from models import ArcBinaryClassifier, ArcBinaryClassifier_conv
 from matplotlib import pyplot as plt
 
 parser = argparse.ArgumentParser()
@@ -52,7 +52,7 @@ def train():
     os.makedirs(models_path, exist_ok=True)
 
     # initialise the model
-    discriminator = ArcBinaryClassifier(num_glimpses=opt.numGlimpses,
+    discriminator = ArcBinaryClassifier_conv(num_glimpses=opt.numGlimpses,
                                         glimpse_h=opt.glimpseSize,
                                         glimpse_w=opt.glimpseSize,
                                         controller_out=opt.numStates)
@@ -93,14 +93,14 @@ def train():
         #        plt.savefig('test_{}_{}.png'.format(i, j))
         #        plt.close()
         
-        pred = discriminator(X)
+        pred, embedding = discriminator(X)
         loss = bce(pred, Y.float())
         
-        if i % 10 == 0:
+        if i % 100 == 0:
 
             # validate your model
             X_val, Y_val = loader.fetch_batch("val")
-            pred_val = discriminator(X_val)
+            pred_val, embedding = discriminator(X_val)
             loss_val = bce(pred_val, Y_val.float())
 
             #training_loss = loss.data[0]
